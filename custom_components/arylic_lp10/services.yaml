@@ -1,0 +1,27 @@
+create_custom_eq:
+  name: Create custom EQ preset
+  description: Create and apply a named eight-band equalizer profile on one LP10.
+  fields:
+    entity_id:
+      name: EQ preset entity
+      description: Select the EQ preset entity for the LP10 to configure.
+      required: true
+      selector:
+        entity:
+          filter:
+            - integration: arylic_lp10
+              domain: select
+    name:
+      name: Preset name
+      description: Use 1–32 plain ASCII characters; ':' and ';' are not allowed.
+      required: true
+      example: Evening
+      selector:
+        text: {}
+    bands:
+      name: Band gains
+      description: >-
+        Provide exactly eight integer gains in dB, ordered by frequency from
+        125 Hz through 16 kHz. Each value must be between -10 and 10.
+      required: true
+      example: [0, 0, 0, 0, 0, 0, 0, 0]

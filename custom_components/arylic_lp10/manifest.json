@@ -1,0 +1,19 @@
+{
+  "domain": "arylic_lp10",
+  "name": "Arylic LP10",
+  "version": "0.3.0rc15",
+  "documentation": "https://github.com/voidnet-stack/arylic-lp10#readme",
+  "issue_tracker": "https://github.com/voidnet-stack/arylic-lp10/issues",
+  "codeowners": ["@voidnet-stack"],
+  "config_flow": true,
+  "dependencies": ["frontend", "panel_custom", "zeroconf"],
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "requirements": ["paramiko>=3.4,<5"],
+  "zeroconf": [
+    {
+      "type": "_airplay._tcp.local.",
+      "properties": {"model": "lp10"}
+    }
+  ]
+}

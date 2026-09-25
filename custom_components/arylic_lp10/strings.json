@@ -1,0 +1,44 @@
+{
+  "title": "Arylic LP10",
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "Add an Arylic LP10",
+        "description": "Enter the player's private LAN IP address and choose its feature profile.",
+        "data": {"host": "IP address", "profile": "Playback profile"}
+      },
+      "reconfigure": {
+        "title": "Change LP10 IP address",
+        "description": "Enter the player's new private LAN IP address. It must be the same physical LP10.",
+        "data": {"host": "IP address"}
+      },
+      "discovery_confirm": {
+        "title": "Add {name}?",
+        "description": "An Arylic LP10 named {name} was found at {host}. Choose its feature profile.",
+        "data": {"profile": "Playback profile"}
+      }
+    },
+    "error": {"cannot_connect": "Could not verify an Arylic LP10 at that address."},
+    "abort": {
+      "already_configured": "This LP10 is already configured.",
+      "cannot_connect": "The discovered LP10 is not responding.",
+      "not_lp10": "This AirPlay device is not an LP10.",
+      "wrong_device": "That address belongs to a different LP10.",
+      "reconfigure_successful": "The LP10 address was updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "LP10 options",
+        "description": "Choose the playback profile for this player. The Detailed profile can use SSH to check and repair the status service. The optional artwork host is only needed when Music Assistant is on another LAN address.",
+        "data": {
+          "profile": "Playback profile",
+          "artwork_proxy_host": "Music Assistant artwork host (optional LAN IPv4)"
+        }
+      }
+    },
+    "error": {"invalid_artwork_host": "Enter a private LAN IPv4 address."}
+  }
+}
