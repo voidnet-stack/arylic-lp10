@@ -49,13 +49,10 @@ rollback behavior, and evidence boundary are documented in
 
 ## Installation
 
-This repository is structured as a HACS custom integration. Add its GitHub
-repository as a custom integration repository in HACS, download **Arylic
-LP10**, restart Home Assistant, then add each player through **Settings →
-Devices & services**. The profile can be selected during setup.
-
-The manifest points to `https://github.com/voidnet-stack/arylic-lp10`. Once that
-public repository exists, add it in HACS as a custom integration repository.
+In HACS, open **Custom repositories** and add
+`voidnet-stack/arylic-lp10` with the type **Integration**. Open **Arylic LP10**
+in HACS and download it, then restart Home Assistant. Add each player through
+**Settings → Devices & services** and choose its profile during setup.
 
 ## Network requirements
 
@@ -107,5 +104,7 @@ python -m compileall -q custom_components
 ```
 
 Automated checks do not replace validation on the target Home Assistant
-release and LP10 firmware. Before publishing, create the matching GitHub
-repository and review the public files for private diagnostics and credentials.
+release and LP10 firmware. Before each release, review the public files for
+private diagnostics and credentials, and validate the version on Home
+Assistant. Publish a GitHub Release for a versioned HACS download; a Git tag
+alone does not appear as a release in HACS.

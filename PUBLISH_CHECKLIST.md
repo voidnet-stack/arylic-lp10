@@ -1,11 +1,13 @@
-# Before making this repository public
+# Before a tagged release
 
-- Confirm the GitHub repository name `arylic-lp10` under `voidnet-stack`.
-- MIT is selected and included.
+- Confirm the release commit and integration manifest carry the intended
+  version, and update the changelog.
 - Review the repair profile's bundled factory credential decision and trusted
   LAN warning.
-- Run the offline tests, HACS validation, and Home Assistant validation on the
-  supported minimum and current Core versions.
+- Run the offline checks and validate the HACS download on the intended Home
+  Assistant versions. The initial public candidate was checked on Core
+  `2026.9.3`; a supported minimum Core version has not yet been established.
 - Keep private packet captures, device logs, Home Assistant backups, and
   per-home player registries out of this repository.
-- Tag the tested integration version and publish its changelog.
+- Create a GitHub Release from the tested commit and tag, mark release
+  candidates as prereleases, and confirm HACS offers the named release.
