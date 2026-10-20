@@ -15,28 +15,33 @@ Assistant reloads that player entry to apply the change.
 ### Lite - controls only
 
 - Controls use the LP10's TCP port 2018.
-- No TCP/5555 metadata reads, media title, artist, album, artwork, or reported
-  playback state.
+- No media title, artist, album, or reported playback state (controls only, by
+  choice — not a technical limitation).
 - Provides volume, mute, source, next/previous, and a separate Play/Pause
   toggle.
 - Does not create the SSH repair status or repair button entities.
 
-### Detailed playback with SSH repair
+### Detailed playback
 
-- Adds track details, artwork when supplied, current playback state, and a
-  metadata health sensor through TCP port 5555.
-- Adds an SSH repair status sensor and an explicit **Apply ADB fix** button.
-  The repair checks the binary against a supported version, creates backups,
-  stages and verifies a candidate, and attempts rollback on failure. It does
-  not run automatically.
-- The device patch is stored under `/tmp`; it is lost on player reboot. A
-  manufacturer firmware update can replace the binary, and a changed binary
-  remains unsupported until it is checked.
-- The bundled repair helper uses the known factory root credential by default
-  and accepts the player's current SSH host key. Use the repair profile only on
-  a trusted private LAN. The optional helper can execute commands as root on
-  the player; the app verifies the executable before changing the running
-  service.
+- Adds track details (title, artist, album), current playback state, playback
+  position/duration, and a metadata health sensor.
+- **All of this is read over the same control port (TCP 2018) as the controls —
+  no ADB / TCP 5555 access is required.** Firmware that ships without `adbd`
+  (e.g. `AR241CP_8747.*`) is fully supported.
+- Album art is not carried on the control port. The integration fetches it
+  best-effort from the player's UPnP renderer, which only reports art for
+  UPnP/DLNA-pushed playback (for example Music Assistant's DLNA provider). For
+  the player's own NET/streaming sources the renderer is empty, so no art is
+  shown — all other now-playing fields still work.
+
+### Optional legacy ADB repair
+
+Older builds of this integration read metadata over ADB (TCP 5555) and shipped
+an SSH **Apply ADB fix** button to re-enable `adbd` on firmware that had removed
+it. Metadata no longer depends on ADB, so this repair is **no longer required**
+and is retained only as an optional tool. If enabled it uses the known factory
+root credential and accepts the player's current SSH host key; use it only on a
+trusted private LAN.
 
 The Lite and Detailed choices are profiles of one HACS integration and share
 one maintained codebase. HACS manages one integration per repository, so the
@@ -56,11 +61,10 @@ in HACS and download it, then restart Home Assistant. Add each player through
 
 ## Network requirements
 
-Home Assistant must have a route to each LP10. TCP port 2018 supports controls;
-UDP port 1800 verifies device identity. The Detailed profile also uses TCP
-5555 for status and track information. Artwork is limited to player-hosted
-paths and the explicitly permitted local Music Assistant image proxy; public
-artwork URLs remain blocked.
+Home Assistant must have a route to each LP10. TCP port 2018 supports both
+controls and now-playing metadata; UDP port 1800 verifies device identity. No
+TCP/5555 (ADB) access is needed for any playback feature. The optional legacy
+ADB repair, if used, is the only thing that touches TCP 5555 / SSH.
 
 The LP10 services are unauthenticated on the local network. Keep the players
 and Home Assistant on a trusted network; do not forward their control or status

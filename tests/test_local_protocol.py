@@ -25,6 +25,7 @@ def load(name: str):
 transport = load("transport")
 protocol = load("protocol")
 luci = load("luci")
+upnp = load("upnp")
 
 
 class ProtocolTests(unittest.TestCase):
@@ -55,6 +56,114 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(result["firmware_version"], "23-4ef47210-9")
         with self.assertRaises(protocol.LP10Error):
             protocol.parse_status({"volume": "VOL:35;"})
+
+    def test_now_playing_over_control_port(self):
+        # ADB-free metadata: the player answers TIT/ART/ALB/PLA/ELP on TCP 2018.
+        # PLA:1 == playing; a live stream reports an unknown (-1) total.
+        playing = protocol.parse_now_playing({
+            "title": "TIT:A Long Time Gone;", "artist": "ART:The Band;",
+            "album": "ALB:Live;", "play": "PLA:1;", "elapsed": "ELP:18038/195000;",
+        })
+        self.assertTrue(playing["available"])
+        self.assertEqual(playing["title"], "A Long Time Gone")
+        self.assertEqual(playing["position_ms"], 18038)
+        self.assertEqual(playing["duration_ms"], 195000)
+        self.assertTrue(playing["playing"])
+        self.assertFalse(playing["idle"])
+        self.assertEqual(playing["playback_state_source"], "control_port")
+
+        # PLA:0 with a retained (stale) track == paused, NOT playing, NOT idle.
+        # The control port keeps the last title/position after a stop, and a
+        # known duration does not imply playback.
+        paused = protocol.parse_now_playing({
+            "title": "TIT:Ordinary Dream;", "artist": "ART:Electric Light Orchestra;",
+            "album": "ALB:Zoom;", "play": "PLA:0;", "elapsed": "ELP:180782/-1;",
+        })
+        self.assertFalse(paused["playing"])
+        self.assertFalse(paused["idle"])
+        self.assertEqual(paused["title"], "Ordinary Dream")
+        self.assertIsNone(paused["duration_ms"])
+
+        # A player that is not playing and holds no track at all is idle.
+        idle = protocol.parse_now_playing({
+            "title": "TIT:;", "artist": "ART:;", "album": "ALB:;",
+            "play": "PLA:0;", "elapsed": "ELP:0/-1;",
+        })
+        self.assertTrue(idle["available"])
+        self.assertTrue(idle["idle"])
+        self.assertFalse(idle["playing"])
+        self.assertEqual(idle["current_source"], 0)
+
+    def test_upnp_album_art_extraction(self):
+        # DIDL is XML-escaped inside the SOAP response; a Music Assistant push
+        # sets albumArtURI to its own image proxy (which the player allowlist
+        # permits), which is the case where UPnP art is actually present.
+        soap = (
+            "<TrackMetaData>&lt;DIDL-Lite&gt;&lt;item&gt;"
+            "&lt;upnp:albumArtURI&gt;http://192.168.1.5:8097/imageproxy/x.jpg"
+            "&lt;/upnp:albumArtURI&gt;&lt;/item&gt;&lt;/DIDL-Lite&gt;</TrackMetaData>"
+        )
+        self.assertEqual(
+            upnp.extract_album_art(soap), "http://192.168.1.5:8097/imageproxy/x.jpg"
+        )
+        # Empty renderer (the player's own NET sources) yields no art.
+        self.assertEqual(upnp.extract_album_art("<TrackMetaData></TrackMetaData>"), "")
+        # Non-http URIs are rejected.
+        self.assertEqual(upnp.extract_album_art(
+            "<TrackMetaData>&lt;upnp:albumArtURI&gt;file:///x.jpg"
+            "&lt;/upnp:albumArtURI&gt;</TrackMetaData>"
+        ), "")
+
+    def test_upnp_artwork_fetches_once_per_track(self):
+        art = upnp.UPnPArtwork("192.168.50.10")
+        calls = {"n": 0}
+
+        def fake(track_key):
+            calls["n"] += 1
+            return "http://192.168.50.10/art.jpg"
+
+        with patch.object(art, "_ensure_control_url", return_value="http://x/ctrl"), \
+                patch.object(upnp, "_soap", side_effect=lambda *a, **k: (
+                    "<TrackMetaData>&lt;upnp:albumArtURI&gt;"
+                    "http://192.168.50.10/art.jpg&lt;/upnp:albumArtURI&gt;</TrackMetaData>"
+                )) as soap_call:
+            first = art.artwork_for(("t", "a", "b"))
+            again = art.artwork_for(("t", "a", "b"))  # same track -> cached, no call
+            changed = art.artwork_for(("t2", "a", "b"))
+        self.assertEqual(first, "http://192.168.50.10/art.jpg")
+        self.assertEqual(again, first)
+        self.assertEqual(changed, first)
+        # One SOAP call for the first track, one for the changed track; the
+        # repeated same-track lookup used the cache.
+        self.assertEqual(soap_call.call_count, 2)
+
+    def test_upnp_artwork_never_raises(self):
+        art = upnp.UPnPArtwork("192.168.50.10")
+        with patch.object(art, "_ensure_control_url", return_value="http://x/ctrl"), \
+                patch.object(upnp, "_soap", side_effect=OSError("boom")):
+            self.assertEqual(art.artwork_for(("t", "a", "b")), "")
+
+    def test_elapsed_parsing_bounds(self):
+        self.assertEqual(protocol.parse_elapsed("ELP:1000/5000;"), (1000, 5000))
+        self.assertEqual(protocol.parse_elapsed("ELP:1000/-1;"), (1000, None))
+        self.assertEqual(protocol.parse_elapsed("ELP:bad;"), (None, None))
+        self.assertEqual(protocol.parse_elapsed(""), (None, None))
+
+    def test_query_now_playing_tolerates_missing_fields(self):
+        client = protocol.LP10Client("192.168.50.10")
+
+        def fake_query(command, *args, **kwargs):
+            table = {"TIT;": "TIT:Song;", "ART;": "ART:Band;", "ALB;": "ALB:Disc;",
+                     "PLA;": "PLA:1;"}
+            if command == "ELP;":
+                raise OSError("timed out")  # one field may time out while idle
+            return table[command]
+
+        with patch.object(client._connection, "query", side_effect=fake_query):
+            result = client.query_now_playing()
+        self.assertEqual(result["title"], "Song")
+        self.assertIsNone(result["position_ms"])
+        self.assertTrue(result["playing"])
 
     def test_identification_rejects_non_lp10_and_uses_stable_id(self):
         with patch.object(protocol, "discovery_metadata", return_value={

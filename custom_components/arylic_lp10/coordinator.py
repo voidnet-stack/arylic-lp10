@@ -14,10 +14,8 @@ from .const import (
     ADB_RETRY_INTERVAL, CUSTOM_EQ_INTERVAL, DETAILS_INTERVAL, METADATA_INTERVAL,
     POLL_INTERVAL, STATUS_INTERVAL,
 )
-from .luci import (
-    StatusUnavailable, read_details, read_now_playing,
-)
 from .protocol import LP10Client, LP10Error, discovery_metadata
+from .upnp import UPnPArtwork
 
 _LOGGER = logging.getLogger(__name__)
 class LP10Coordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -33,6 +31,10 @@ class LP10Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.client = client
         self.identity = identity
         self.metadata_enabled = metadata_enabled
+        # Album art is not on the control port; the UPnP renderer carries it,
+        # but only for UPnP/DLNA-pushed playback (e.g. Music Assistant), not the
+        # player's own NET/streaming sources. Best-effort and never fatal.
+        self._artwork = UPnPArtwork(client.host) if metadata_enabled else None
         self._status: dict[str, Any] = {}
         self._status_at = 0.0
         self._status_retry_at = 0.0
@@ -168,6 +170,8 @@ class LP10Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._media_failures = 0
             self._idle_reads = 0
             self._reset_position()
+            if self._artwork:
+                self._artwork.reset()
             self._now_playing = {
                 "available": False,
                 "metadata_status": "unknown" if self.metadata_enabled else "disabled",
@@ -194,23 +198,13 @@ class LP10Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     else "Wi-Fi" if discovery.get("netmode") else self._details.get("connectivity")
                 ),
             })
-            if self.metadata_enabled and now >= self._details_retry_at:
-                live = read_details(self.client.host)
-                if live:
-                    self._details.update(live)
-                    if "uptime_seconds" in live:
-                        self._uptime_at = now
-                if not live.get("mac_address"):
-                    self._details_retry_at = now + ADB_RETRY_INTERVAL
-                    self._details_at = now - DETAILS_INTERVAL + ADB_RETRY_INTERVAL
-
         if self.metadata_enabled and now >= self._metadata_at + METADATA_INTERVAL:
             self._metadata_at = now
             if now >= self._media_retry_at:
                 try:
-                    fresh = read_now_playing(self.client.host)
+                    fresh = self.client.query_now_playing()
                     if not fresh.get("available"):
-                        raise StatusUnavailable("The LP10 returned incomplete now-playing data")
+                        raise LP10Error("The LP10 returned incomplete now-playing data")
                     held_idle = False
                     self._media_failures = 0
                     self._media_retry_at = 0.0
@@ -223,6 +217,13 @@ class LP10Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                         self._idle_reads = 0
                     if not held_idle:
                         self._normalize_position(fresh)
+                        # Best-effort album art from the UPnP renderer (only
+                        # populated for UPnP/DLNA-pushed playback). Keyed on the
+                        # track so it fetches once per track, never per poll.
+                        if self._artwork and not fresh.get("idle"):
+                            fresh["cover_art_url"] = self._artwork.artwork_for((
+                                fresh.get("title"), fresh.get("artist"), fresh.get("album"),
+                            ))
                     if fresh.get("position_ms") is not None and not held_idle:
                         fresh["position_updated_at"] = datetime.now(timezone.utc)
                     fresh["metadata_last_success"] = datetime.now(timezone.utc).isoformat()
@@ -240,7 +241,7 @@ class LP10Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     else:
                         fresh["metadata_status"] = "no_track_data"
                     self._now_playing = fresh
-                except StatusUnavailable:
+                except LP10Error:
                     self._media_failures += 1
                     self._now_playing = {
                         **self._now_playing,

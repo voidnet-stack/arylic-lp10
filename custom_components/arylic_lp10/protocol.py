@@ -128,6 +128,80 @@ def parse_status(replies: dict[str, str]) -> dict[str, Any]:
     return result
 
 
+def _text_field(value: str | None) -> str:
+    """Keep a short, printable control-port text value (title/artist/album)."""
+    if not value:
+        return ""
+    return "".join(c for c in value if c.isprintable())[:2048]
+
+
+def parse_elapsed(reply: str | None) -> tuple[int | None, int | None]:
+    """Parse ``ELP:<position>/<total>;`` milliseconds; ``-1`` total means unknown."""
+    payload = _field(reply or "", "ELP")
+    if payload is None or "/" not in payload:
+        return None, None
+    position_raw, _, total_raw = payload.partition("/")
+    try:
+        position = int(position_raw)
+        total = int(total_raw)
+    except ValueError:
+        return None, None
+    position_ms = position if 0 <= position <= 7 * 86400000 else None
+    duration_ms = total if 0 < total <= 7 * 86400000 else None
+    return position_ms, duration_ms
+
+
+def parse_now_playing(replies: dict[str, str]) -> dict[str, Any]:
+    """Build the now-playing snapshot from control-port (TCP 2018) replies.
+
+    This is the ADB-free metadata path: the player answers ``TIT;``/``ART;``/
+    ``ALB;``/``PLA;``/``ELP;`` on the same control port used for everything else,
+    so no TCP/5555 ADB access is required. The returned shape matches what the
+    coordinator and entities consume.
+    """
+    title = _text_field(_field(replies.get("title", ""), "TIT"))
+    artist = _text_field(_field(replies.get("artist", ""), "ART"))
+    album = _text_field(_field(replies.get("album", ""), "ALB"))
+    play_state = _integer(_field(replies.get("play", ""), "PLA"), 0, 9)
+    position_ms, duration_ms = parse_elapsed(replies.get("elapsed", ""))
+
+    # PLA is the reliable play signal: 1 = playing, 0 (or anything else) =
+    # paused/stopped. When stopped the control port KEEPS the last track's
+    # title/album and a frozen position, so presence of track text does NOT
+    # mean playing, and a known duration does not either (a paused track still
+    # reports its total). Only PLA==1 (corroborated by an advancing ELP) means
+    # audio is actually playing.
+    playing = None if play_state is None else play_state == 1
+    has_track = bool(title or artist or album) or (duration_ms or 0) > 0
+    # Idle (blank the player) only when it is not playing AND holds no track at
+    # all. A not-playing player that still holds a track reads as paused.
+    idle = playing is not True and not has_track
+    result: dict[str, Any] = {
+        "available": True,
+        "title": title,
+        "artist": artist,
+        "album": album,
+        # Not exposed by the control port; kept for a stable data contract.
+        "cover_art_url": "",
+        "mime": "",
+        "sample_rate": None,
+        "bit_depth": None,
+        "duration_ms": duration_ms,
+        "position_ms": position_ms,
+        "play_state": play_state,
+        # 0 lets the coordinator treat a quiet player as idle; a non-0, non-1
+        # value marks "active, not AirPlay" so the AirPlay-only position
+        # correction stays disabled on this transport.
+        "current_source": 0 if idle else 2,
+        "playing": playing,
+        "idle": idle,
+        "can_previous": True,
+        "can_next": True,
+        "playback_state_source": "control_port",
+    }
+    return result
+
+
 def parse_custom_eq_profiles(reply: str) -> dict[int, str]:
     """Parse the named custom-EQ slots reported by ``CEQ:LST;``."""
     payload = _field(reply, "CEQ:LST")
@@ -264,6 +338,33 @@ class LP10Client:
             except OSError as exc:
                 raise LP10Error("Could not reach the LP10 control port") from exc
         return parse_status(replies)
+
+    NOW_PLAYING_CODES = {
+        "title": "TIT", "artist": "ART", "album": "ALB",
+        "play": "PLA", "elapsed": "ELP",
+    }
+
+    def query_now_playing(self) -> dict[str, Any]:
+        """Read now-playing metadata over the control port (no ADB/TCP 5555).
+
+        Per-field timeouts are tolerated (a quiet player answers some codes with
+        empty text); only a connection-level failure raises, so an idle player
+        reports ``idle`` rather than unreachable.
+        """
+        replies: dict[str, str] = {}
+        with self._transaction():
+            try:
+                with self._connection.transaction():
+                    for key, code in self.NOW_PLAYING_CODES.items():
+                        try:
+                            replies[key] = self._connection.query(f"{code};")
+                        except OSError:
+                            # One field (often TIT/ART/ALB when idle) can time
+                            # out without the session being down; treat as empty.
+                            replies[key] = ""
+            except OSError as exc:
+                raise LP10Error("Could not read the LP10 now-playing status") from exc
+        return parse_now_playing(replies)
 
     def _write(self, command: str, cooldown: float) -> None:
         with self._transaction():
